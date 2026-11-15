@@ -35,14 +35,14 @@ class SettingsDialog(Adw.PreferencesDialog):
 
         # Group 2: Background Service
         service_group = Adw.PreferencesGroup(
-            title="Background Service (systemd user daemon)",
-            description="Automatic periodic checks for new releases"
+            title="Automatic Checks",
+            description="Periodic checks for new releases while just-release is open"
         )
         page.add(service_group)
 
         self.interval_row = Adw.SpinRow(
             title="Check Interval (Hours)",
-            subtitle="How frequently the background service checks GitHub",
+            subtitle="How frequently just-release checks GitHub",
             adjustment=Gtk.Adjustment(
                 value=float(settings.get("poll_interval_hours", 4)),
                 lower=1.0,
@@ -99,9 +99,15 @@ class SettingsDialog(Adw.PreferencesDialog):
             "desktop_notifications": self.notif_row.get_active(),
             "github_token": self.token_row.get_text().strip()
         }
-        self.config_manager.update_settings(new_settings)
+        # Switch manifests first, so the settings are written to the active file
+        # rather than to the one being left behind.
         if new_manifest and new_manifest != str(self.config_manager.manifest_path):
-            self.config_manager.set_manifest_path(new_manifest)
+            try:
+                self.config_manager.set_manifest_path(new_manifest)
+            except OSError as e:
+                self.add_toast(Adw.Toast(title=f"Cannot use that manifest: {e}"))
+                return
+        self.config_manager.update_settings(new_settings)
 
         if self.on_saved:
             self.on_saved()

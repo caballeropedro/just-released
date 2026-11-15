@@ -14,9 +14,7 @@ class JustReleaseApp(Adw.Application):
         self.manifest_path = manifest_path
 
     def do_activate(self):
-        Adw.init()
-        config_manager = ConfigManager(self.manifest_path)
         win = self.props.active_window
         if not win:
-            win = MainWindow(self, config_manager)
+            win = MainWindow(self, ConfigManager(self.manifest_path))
         win.present()
