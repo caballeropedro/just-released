@@ -17,7 +17,8 @@ Built for Linux using GTK 4 and Libadwaita, `just-release` provides a dashboard 
 - Lifecycle hooks (`pre_update`, `post_update`) supporting custom shell scripts.
 - Declarative YAML manifest for managing tracked repositories and settings.
 - Optional GitHub Personal Access Token (PAT) support for private repositories and elevated API rate limits.
-- Background check interval and desktop notification settings.
+- SHA-256 verification of downloads when GitHub publishes a digest for the asset.
+- Automatic release checks at a configurable interval while the app is open, with optional desktop notifications.
 - Direct folder navigation via `xdg-open`.
 
 ## System Requirements
@@ -71,14 +72,17 @@ sudo pacman -S --needed \
 
 ## Installation
 
-Activate the virtual environment and install the required Python packages from `requirements.txt`:
+Create a virtual environment and install the required Python packages from `requirements.txt`:
 
 ```bash
+python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-Note: PyGObject interfaces with system-level GTK 4 and Libadwaita introspection libraries. If using an existing virtual environment, ensure `include-system-site-packages = true` is set in your `.venv/pyvenv.cfg`.
+Note: recent PyGObject releases build against girepository 2.0. If `pip` fails to build PyGObject on Debian or Ubuntu, install `libgirepository-2.0-dev` as well.
+
+Alternatively, use your distribution's PyGObject and PyYAML packages (`python3-gi` and `python3-yaml` on Debian or Ubuntu) and skip `pip` by creating the environment with `python3 -m venv --system-site-packages .venv`.
 
 ## Running the Application
 
@@ -140,30 +144,30 @@ tools:
     strategy: "smart-sync"
     current_version: "Ghidra_11.2.1_build"
     latest_version: "Ghidra_11.3.1_build"
-    last_checked: "2026-09-15"
+    last_checked: "2026-09-15 19:12:16"
     hooks:
       pre_update: "pkill -f ghidraRun || true"
-      post_update: "echo 'Ghidra updated to' $JUST_RELEASE_NEW_VERSION"
+      post_update: "echo \"Ghidra updated to $JUST_RELEASE_NEW_VERSION\""
 
   ripgrep:
     name: "ripgrep"
     repo: "BurntSushi/ripgrep"
-    install_to: "/home/user/.local/bin"
+    install_to: "/home/user/.local/opt/ripgrep"
     asset_pattern: "*x86_64*linux*musl*.tar.gz"
     strategy: "wipe"
     current_version: "14.1.0"
     latest_version: "14.1.0"
-    last_checked: "2026-09-15"
+    last_checked: "2026-09-15 19:12:17"
     hooks:
       pre_update: ""
-      post_update: ""
+      post_update: "ln -sf \"$JUST_RELEASE_INSTALL_DIR/rg\" \"$HOME/.local/bin/rg\""
 ```
 
 ### Configuration Reference
 
 | Key | Type | Description |
 |---|---|---|
-| `settings.poll_interval_hours` | Integer | Interval in hours between automated release checks (1 to 72). |
+| `settings.poll_interval_hours` | Integer | Interval in hours between automated release checks (1 to 72). Checks run while the app is open. |
 | `settings.desktop_notifications` | Boolean | Enable or disable desktop notifications when updates are found. |
 | `settings.github_token` | String | GitHub Personal Access Token (optional). Raises API rate limit from 60 to 5,000 requests/hour and enables private repository tracking. |
 | `tools.<id>.name` | String | Human-readable name for the tool. |
@@ -173,6 +177,7 @@ tools:
 | `tools.<id>.strategy` | String | Update mechanism: `smart-sync`, `symlink`, or `wipe`. |
 | `tools.<id>.current_version` | String | Currently installed version tag. |
 | `tools.<id>.latest_version` | String | Most recent upstream tag detected. |
+| `tools.<id>.last_checked` | String | Time of the last successful release check. |
 | `tools.<id>.hooks.pre_update` | String | Shell command to execute before the update process. |
 | `tools.<id>.hooks.post_update` | String | Shell command to execute after the update process finishes. |
 
@@ -184,12 +189,25 @@ tools:
 | Symlink Strategy | `symlink` | Installs versions into isolated subdirectories (`versions/<tag>/`) and points a `current` symlink to the active version. | Daemons, runtimes, and tools needing atomic updates or rollback capability. |
 | Clean Wipe | `wipe` | Deletes the destination directory contents prior to unpacking the fresh release. | Standalone CLI tools and single binary archives (such as ripgrep). |
 
+### How an Update Is Applied
+
+1. The asset matching `asset_pattern` is downloaded and, when GitHub publishes a SHA-256 digest for it, verified.
+2. `.zip` and `.tar.*` archives are extracted. Any other asset is treated as a single executable file.
+3. If the archive wraps everything in one top-level folder (such as `ripgrep-15.2.0-x86_64-unknown-linux-musl/`), the contents of that folder are installed, so every release lands on the same paths.
+4. The `pre_update` hook runs, the strategy is applied, then the `post_update` hook runs.
+
+The `wipe` strategy deletes everything in `install_to`, so give each such tool its own directory. It asks for confirmation before clearing a directory that just-release did not install into, and refuses to run on your home directory or its parents. Each install directory gets a `.just-release.json` marker file recording what was installed.
+
 ## Lifecycle Hooks
 
-Hooks execute custom shell commands during tool updates. The following environment variables are exposed to hook processes:
+Hooks execute custom shell commands (through `/bin/sh`) during tool updates, with the install directory as the working directory. The following environment variables are exposed to hook processes:
 
-- `JUST_RELEASE_TOOL`: Identifier or name of the tool.
+- `JUST_RELEASE_TOOL`: Identifier of the tool (its key in the manifest).
 - `JUST_RELEASE_NEW_VERSION`: Tag name of the new release.
+- `JUST_RELEASE_OLD_VERSION`: Tag name of the version being replaced (empty on first install).
+- `JUST_RELEASE_INSTALL_DIR`: Absolute path of the install directory.
+
+If the `pre_update` hook exits with a non-zero status, the update is aborted before any installed file is touched. A failing `post_update` hook is reported as a warning.
 
 Example pre-update hook to stop running processes:
 ```bash
@@ -210,14 +228,22 @@ ln -sf /home/user/apps/myapp/current/myapp /home/user/.local/bin/myapp
 ├── just_release/
 │   ├── __init__.py
 │   ├── config.py               # YAML manifest manager and defaults
-│   ├── github.py               # GitHub API client and asset pattern matching
+│   ├── github.py               # GitHub API client, downloads, and asset pattern matching
+│   ├── installer.py            # Extraction, update strategies, and lifecycle hooks
 │   └── ui/
 │       ├── __init__.py
 │       ├── app.py              # Adw.Application lifecycle setup
 │       ├── main_window.py      # Primary application window and tool listing
 │       ├── settings_dialog.py  # Preferences and manifest configuration dialog
 │       └── track_dialog.py     # Repository tracking and asset selection dialog
+├── tests/                      # Unit tests (no GTK required)
 └── README.md
+```
+
+## Running the Tests
+
+```bash
+python -m unittest discover -s tests -t .
 ```
 
 ## License

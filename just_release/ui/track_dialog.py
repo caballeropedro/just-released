@@ -6,7 +6,7 @@ import threading
 import os
 import re
 from pathlib import Path
-from ..github import get_latest_release, match_asset, format_size
+from ..github import get_latest_release, match_asset, format_size, normalize_repo
 
 class TrackDialog(Adw.Window):
     def __init__(self, parent_window, config_manager, tool_id=None, on_saved=None):
@@ -60,7 +60,7 @@ class TrackDialog(Adw.Window):
         repo_group.add(self.name_row)
 
         self.repo_row = Adw.EntryRow(title="Repository (owner/repo)")
-        self.repo_row.set_text(existing_data.get("repo", "NationalSecurityAgency/ghidra" if not is_edit else ""))
+        self.repo_row.set_text(existing_data.get("repo", ""))
         repo_group.add(self.repo_row)
 
         fetch_row = Adw.ActionRow(
@@ -91,7 +91,7 @@ class TrackDialog(Adw.Window):
         prefs_page.add(self.asset_filter_group)
 
         self.pattern_row = Adw.EntryRow(title="Asset Pattern / Glob")
-        self.pattern_row.set_text(existing_data.get("asset_pattern", "ghidra_*_PUBLIC_*.zip" if not is_edit else ""))
+        self.pattern_row.set_text(existing_data.get("asset_pattern", ""))
         self.pattern_row.connect("changed", self.on_pattern_changed)
         self.asset_filter_group.add(self.pattern_row)
 
@@ -108,8 +108,7 @@ class TrackDialog(Adw.Window):
         prefs_page.add(dest_group)
 
         self.dest_row = Adw.EntryRow(title="Install Directory")
-        default_dest = existing_data.get("install_to", str(Path.home() / "security" / "ghidra" if not is_edit else ""))
-        self.dest_row.set_text(default_dest)
+        self.dest_row.set_text(existing_data.get("install_to", ""))
         dest_group.add(self.dest_row)
 
         browse_row = Adw.ActionRow(title="Browse Folder")
@@ -167,10 +166,12 @@ class TrackDialog(Adw.Window):
         self.hooks_expander.add_row(self.post_hook_row)
 
     def on_fetch_clicked(self, btn):
-        repo = self.repo_row.get_text().strip()
+        repo = normalize_repo(self.repo_row.get_text())
         if not repo:
-            self.release_status_lbl.set_text("Please enter a repo")
+            self.repo_row.add_css_class("error")
+            self.release_status_lbl.set_text("Enter a repo as owner/repo")
             return
+        self.repo_row.remove_css_class("error")
 
         self.fetch_btn.set_sensitive(False)
         self.release_status_lbl.set_text("Querying GitHub...")
@@ -280,15 +281,25 @@ class TrackDialog(Adw.Window):
             pass
 
     def on_save_clicked(self, btn):
-        repo = self.repo_row.get_text().strip()
+        repo = normalize_repo(self.repo_row.get_text())
+        install_to = self.dest_row.get_text().strip()
+        for row, valid in ((self.repo_row, bool(repo)), (self.dest_row, bool(install_to))):
+            if valid:
+                row.remove_css_class("error")
+            else:
+                row.add_css_class("error")
         if not repo:
+            self.release_status_lbl.set_text("Enter a repo as owner/repo")
+            return
+        if not install_to:
             return
 
         name = self.name_row.get_text().strip()
         if not name:
             name = repo.split("/")[-1]
 
-        tool_id = self.tool_id or name.lower().replace(" ", "-")
+        # A new tool never reuses an existing id, which would overwrite that tool.
+        tool_id = self.tool_id or self.config_manager.unique_tool_id(name)
 
         strat_idx = self.strat_row.get_selected()
         strat_str = "smart-sync"
@@ -300,10 +311,12 @@ class TrackDialog(Adw.Window):
         existing_tools = self.config_manager.get_tools()
         cur_tool = existing_tools.get(tool_id, {})
 
-        tool_data = {
+        # Start from the stored entry so keys this dialog does not edit survive.
+        tool_data = dict(cur_tool)
+        tool_data.update({
             "name": name,
             "repo": repo,
-            "install_to": self.dest_row.get_text().strip(),
+            "install_to": install_to,
             "asset_pattern": self.pattern_row.get_text().strip(),
             "strategy": strat_str,
             "current_version": cur_tool.get("current_version", ""),
@@ -313,7 +326,7 @@ class TrackDialog(Adw.Window):
                 "pre_update": self.pre_hook_row.get_text(),
                 "post_update": self.post_hook_row.get_text()
             }
-        }
+        })
 
         self.config_manager.save_tool(tool_id, tool_data)
         if self.on_saved:
