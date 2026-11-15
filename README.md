@@ -1,39 +1,30 @@
 # just-release
 
-A native desktop application for tracking, downloading, and orchestrating software installations from GitHub Releases.
+Keep the tools you install from GitHub Releases up to date, without doing it by hand.
 
-Built for Linux using GTK 4 and Libadwaita, `just-release` provides a dashboard to monitor upstream repositories, inspect release assets, match files with glob patterns, and automate deployment strategies.
+Plenty of good software never reaches your distribution's package manager. You download a zip from a project's Releases page, unpack it somewhere, and then forget about it until it is a year out of date. just-release is a small Linux desktop app that takes over that chore. You tell it which repositories you care about and where each tool lives on disk. It watches for new releases and installs them for you.
 
-## Features
+It is written in Python with GTK 4 and Libadwaita, so it looks at home on a GNOME desktop.
 
-- Native GTK 4 and Libadwaita user interface.
-- Upstream GitHub Release inspection for tags, release notes, and assets.
-- Asset pattern matching using glob patterns or regular expressions.
-- Automated asset pattern generation based on selected release filenames.
-- Three installation and update strategies:
-  - Smart In-Place Sync (`smart-sync`): Updates binaries while preserving local configuration files and custom scripts.
-  - Symlink Strategy (`symlink`): Installs each release into versioned directories (`versions/<tag>/`) and points a `current` symlink to the active version.
-  - Clean Wipe (`wipe`): Removes destination contents prior to extracting a fresh release.
-- Lifecycle hooks (`pre_update`, `post_update`) supporting custom shell scripts.
-- Declarative YAML manifest for managing tracked repositories and settings.
-- Optional GitHub Personal Access Token (PAT) support for private repositories and elevated API rate limits.
-- SHA-256 verification of downloads when GitHub publishes a digest for the asset.
-- Automatic release checks at a configurable interval while the app is open, with optional desktop notifications.
-- Direct folder navigation via `xdg-open`.
+## What it does
 
-## System Requirements
+- **Tracks repositories.** Add any GitHub repository and see its latest release, tag and downloadable files.
+- **Picks the right file.** Most releases ship a dozen files for different platforms. Click the one you want and just-release works out a pattern (such as `ghidra_*_PUBLIC_*.zip`) that will match the same file in future releases. You can also write the pattern yourself, as a glob or a regular expression.
+- **Installs and updates.** One click downloads the file, checks it against the SHA-256 digest when GitHub publishes one, unpacks it and puts it in place.
+- **Leaves your files alone.** You choose how each tool is updated, so plugins and configuration you added survive an update. See [Update strategies](#update-strategies).
+- **Runs your scripts.** Shell hooks can run before and after each update, for example to stop a running program or refresh a symlink.
+- **Checks on its own.** While the app is open it looks for new releases every few hours and can send a desktop notification when it finds one.
+- **Works with private repositories.** Add a GitHub token in Settings to track private repositories. A token also raises the API limit from 60 to 5,000 requests an hour.
 
-- Linux desktop environment
-- Python 3.10 or newer
-- GTK 4 and Libadwaita 1.0+ runtime and development libraries
-- PyGObject dependencies (Cairo and GObject introspection)
-- `xdg-utils` (for opening directories in the file manager)
+Everything is stored in one YAML file that you can read, edit and keep in your dotfiles.
 
-### System Packages
+## Getting started
 
-PyGObject and GTK 4 require native system libraries and GObject Introspection bindings. Install them using your distribution's package manager:
+### 1. Install the system libraries
 
-#### Debian / Ubuntu
+GTK and Libadwaita come from your distribution, not from `pip`. You need Python 3.10 or newer and Libadwaita 1.5 or newer.
+
+Debian or Ubuntu:
 
 ```bash
 sudo apt update
@@ -46,7 +37,7 @@ sudo apt install -y \
     xdg-utils
 ```
 
-#### Fedora
+Fedora:
 
 ```bash
 sudo dnf install -y \
@@ -58,7 +49,7 @@ sudo dnf install -y \
     xdg-utils
 ```
 
-#### Arch Linux
+Arch Linux:
 
 ```bash
 sudo pacman -S --needed \
@@ -70,9 +61,7 @@ sudo pacman -S --needed \
     xdg-utils
 ```
 
-## Installation
-
-Create a virtual environment and install the required Python packages from `requirements.txt`:
+### 2. Install the Python packages
 
 ```bash
 python3 -m venv .venv
@@ -80,53 +69,89 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-Note: recent PyGObject releases build against girepository 2.0. If `pip` fails to build PyGObject on Debian or Ubuntu, install `libgirepository-2.0-dev` as well.
+If `pip` fails while building PyGObject on Debian or Ubuntu, install `libgirepository-2.0-dev` and try again. Recent PyGObject versions need it.
 
-Alternatively, use your distribution's PyGObject and PyYAML packages (`python3-gi` and `python3-yaml` on Debian or Ubuntu) and skip `pip` by creating the environment with `python3 -m venv --system-site-packages .venv`.
+You can also skip `pip` and use the packages your distribution already provides (`python3-gi` and `python3-yaml` on Debian or Ubuntu). In that case, create the environment with `python3 -m venv --system-site-packages .venv`.
 
-## Running the Application
-
-With the virtual environment active:
+### 3. Run it
 
 ```bash
-source .venv/bin/activate
 python main.py
 ```
 
-### Specifying a Custom Manifest
+The first run creates `~/.config/just-release/releases.yaml` with two example tools, Ghidra and ripgrep, so you can see how things fit together. Nothing is installed until you click **Install**. Edit or remove the examples as you like.
 
-By default, configurations are saved to `~/.config/just-release/releases.yaml`. To load a custom manifest:
+To keep your manifest somewhere else, pass its path:
 
 ```bash
 python main.py --manifest /path/to/releases.yaml
 ```
 
-or with the short flag:
+`-m` is the short form. You can also change the path later in Settings.
+
+## Tracking a tool
+
+1. Click **+ Track Repo**.
+2. Enter the repository as `owner/repo`. Pasting a GitHub URL works too.
+3. Click **Fetch Assets** to list the files in the latest release, then **Select** the one for your machine.
+4. Choose the directory to install into and an update strategy.
+5. Click **Track Tool**.
+
+The tool now appears in the main window. When a release is available that you do not have, an **Install** or **Update** button appears next to it.
+
+## Update strategies
+
+Each tool has a strategy that decides what happens to the files already in its install directory.
+
+| Strategy | Value | What it does | Good for |
+|---|---|---|---|
+| Smart In-Place Sync | `smart-sync` | Unpacks the release over the install directory. Files from the release replace the old ones. Anything else you put there is left untouched. | Tools you extend with plugins or local configuration, such as Ghidra or an IDE. |
+| Symlink Strategy | `symlink` | Puts each release in its own folder, `versions/<tag>/`, and points a `current` symlink at the newest one. Older versions stay on disk. | Tools where you want a clean switch between versions, or the option to go back to an older one. |
+| Clean Wipe | `wipe` | Deletes everything in the install directory, then unpacks the release. | Self-contained tools that should match the release exactly, such as ripgrep. |
+
+A few details apply to every strategy:
+
+- `.zip` and `.tar.*` archives are unpacked. Any other file is treated as a single program and made executable.
+- Many archives wrap everything in one versioned folder, such as `ripgrep-15.2.0-x86_64-unknown-linux-musl/`. just-release installs the contents of that folder, not the folder itself, so every release lands on the same paths.
+- Each install directory gets a small `.just-release.json` file recording what was installed and when.
+
+### A word of caution about Clean Wipe
+
+Clean Wipe deletes **everything** in the install directory, so always give those tools a directory of their own. Never point one at a shared location such as `~/.local/bin`.
+
+There are two safeguards. just-release asks you to confirm before it clears a directory it did not install into, and it refuses outright to wipe your home directory or anything above it.
+
+## Hooks
+
+A hook is a shell command that runs as part of an update. Each tool can have two:
+
+- `pre_update` runs after the download, just before any installed file is touched. If it fails, the update is cancelled and nothing is changed.
+- `post_update` runs once the new files are in place. If it fails, the update still counts as done and you are shown the error as a warning.
+
+Hooks run through `/bin/sh` from the install directory. These variables are available to them:
+
+| Variable | Contents |
+|---|---|
+| `JUST_RELEASE_TOOL` | The tool's key in the manifest, such as `ripgrep`. |
+| `JUST_RELEASE_NEW_VERSION` | The tag being installed. |
+| `JUST_RELEASE_OLD_VERSION` | The tag being replaced. Empty on a first install. |
+| `JUST_RELEASE_INSTALL_DIR` | The full path of the install directory. |
+
+For example, to stop a program before it is updated:
 
 ```bash
-python main.py -m /path/to/releases.yaml
+pkill -f myapp || true
 ```
 
-### Command-Line Usage
+And to put the new version on your `PATH` afterwards:
 
-```
-usage: main.py [-h] [--manifest MANIFEST]
-
-just-release: Autonomous GitHub Release Orchestrator
-
-options:
-  -h, --help            show this help message and exit
-  --manifest MANIFEST, -m MANIFEST
-                        Path to releases manifest file (YAML)
+```bash
+ln -sf "$JUST_RELEASE_INSTALL_DIR/current/myapp" "$HOME/.local/bin/myapp"
 ```
 
-## Manifest Configuration
+## The manifest
 
-The configuration file is written in YAML format. If missing at startup, a default manifest is generated automatically.
-
-Default path: `~/.config/just-release/releases.yaml`
-
-### Example Manifest
+The app writes the manifest for you, but it is plain YAML and you are welcome to edit it by hand. It lives at `~/.config/just-release/releases.yaml` unless you chose another path.
 
 ```yaml
 version: 1
@@ -163,84 +188,65 @@ tools:
       post_update: "ln -sf \"$JUST_RELEASE_INSTALL_DIR/rg\" \"$HOME/.local/bin/rg\""
 ```
 
-### Configuration Reference
+### Settings
 
-| Key | Type | Description |
-|---|---|---|
-| `settings.poll_interval_hours` | Integer | Interval in hours between automated release checks (1 to 72). Checks run while the app is open. |
-| `settings.desktop_notifications` | Boolean | Enable or disable desktop notifications when updates are found. |
-| `settings.github_token` | String | GitHub Personal Access Token (optional). Raises API rate limit from 60 to 5,000 requests/hour and enables private repository tracking. |
-| `tools.<id>.name` | String | Human-readable name for the tool. |
-| `tools.<id>.repo` | String | GitHub repository in `owner/repo` format. |
-| `tools.<id>.install_to` | String | Target directory where the tool is unpacked or linked. |
-| `tools.<id>.asset_pattern` | String | Glob pattern or regular expression matching release archive names. |
-| `tools.<id>.strategy` | String | Update mechanism: `smart-sync`, `symlink`, or `wipe`. |
-| `tools.<id>.current_version` | String | Currently installed version tag. |
-| `tools.<id>.latest_version` | String | Most recent upstream tag detected. |
-| `tools.<id>.last_checked` | String | Time of the last successful release check. |
-| `tools.<id>.hooks.pre_update` | String | Shell command to execute before the update process. |
-| `tools.<id>.hooks.post_update` | String | Shell command to execute after the update process finishes. |
+| Key | Meaning |
+|---|---|
+| `poll_interval_hours` | How often to check for new releases while the app is open, from 1 to 72 hours. |
+| `desktop_notifications` | Whether to send a desktop notification when a release is found or installed. |
+| `github_token` | An optional GitHub personal access token. |
 
-## Update Strategies
+### Tools
 
-| Strategy | Value | Behavior | Recommended For |
-|---|---|---|---|
-| Smart In-Place Sync | `smart-sync` | Unpacks release contents over the destination directory, replacing updated files while preserving existing custom files and plugins. | IDEs, decompilers (such as Ghidra), and tools with user plugins or local configs. |
-| Symlink Strategy | `symlink` | Installs versions into isolated subdirectories (`versions/<tag>/`) and points a `current` symlink to the active version. | Daemons, runtimes, and tools needing atomic updates or rollback capability. |
-| Clean Wipe | `wipe` | Deletes the destination directory contents prior to unpacking the fresh release. | Standalone CLI tools and single binary archives (such as ripgrep). |
+Each entry under `tools` has a short key of your choosing (`ghidra` and `ripgrep` above) and these fields:
 
-### How an Update Is Applied
+| Key | Meaning |
+|---|---|
+| `name` | The name shown in the app. |
+| `repo` | The GitHub repository, as `owner/repo`. |
+| `install_to` | The directory the tool is installed into. |
+| `asset_pattern` | A glob or regular expression that picks the file to download from each release. |
+| `strategy` | `smart-sync`, `symlink` or `wipe`. |
+| `current_version` | The tag you have installed. The app fills this in. |
+| `latest_version` | The newest tag seen on GitHub. The app fills this in. |
+| `last_checked` | When the app last checked the repository. The app fills this in. |
+| `hooks.pre_update` | Shell command to run before an update. |
+| `hooks.post_update` | Shell command to run after an update. |
 
-1. The asset matching `asset_pattern` is downloaded and, when GitHub publishes a SHA-256 digest for it, verified.
-2. `.zip` and `.tar.*` archives are extracted. Any other asset is treated as a single executable file.
-3. If the archive wraps everything in one top-level folder (such as `ripgrep-15.2.0-x86_64-unknown-linux-musl/`), the contents of that folder are installed, so every release lands on the same paths.
-4. The `pre_update` hook runs, the strategy is applied, then the `post_update` hook runs.
+Two things to know before you edit by hand:
 
-The `wipe` strategy deletes everything in `install_to`, so give each such tool its own directory. It asks for confirmation before clearing a directory that just-release did not install into, and refuses to run on your home directory or its parents. Each install directory gets a `.just-release.json` marker file recording what was installed.
+- The app rewrites the whole file when it saves, so comments you add will be lost.
+- The file can contain your GitHub token, so the app keeps it readable only by you. Remove the token before sharing the file or committing it to a public repository.
 
-## Lifecycle Hooks
+If the manifest cannot be read, for instance after a typo, the app does not overwrite it. It sets the file aside as `releases.yaml.broken-<date>` and tells you.
 
-Hooks execute custom shell commands (through `/bin/sh`) during tool updates, with the install directory as the working directory. The following environment variables are exposed to hook processes:
+## Good to know
 
-- `JUST_RELEASE_TOOL`: Identifier of the tool (its key in the manifest).
-- `JUST_RELEASE_NEW_VERSION`: Tag name of the new release.
-- `JUST_RELEASE_OLD_VERSION`: Tag name of the version being replaced (empty on first install).
-- `JUST_RELEASE_INSTALL_DIR`: Absolute path of the install directory.
+- Release checks only happen while the app is open. There is no background service yet.
+- Only the latest full release of a repository is considered. Pre-releases are ignored.
+- Closing the window is blocked while an install is running, so an update is never cut off halfway.
 
-If the `pre_update` hook exits with a non-zero status, the update is aborted before any installed file is touched. A failing `post_update` hook is reported as a warning.
+## Development
 
-Example pre-update hook to stop running processes:
-```bash
-pkill -f myapp || true
-```
-
-Example post-update hook to refresh symlinks or create desktop entries:
-```bash
-ln -sf /home/user/apps/myapp/current/myapp /home/user/.local/bin/myapp
-```
-
-## Project Structure
+The code is split so that everything apart from the interface can be tested without GTK:
 
 ```
 .
-├── main.py                     # CLI entrypoint and application launcher
-├── requirements.txt            # Python package dependencies
+├── main.py                     # Command-line entry point
+├── requirements.txt
 ├── just_release/
-│   ├── __init__.py
-│   ├── config.py               # YAML manifest manager and defaults
-│   ├── github.py               # GitHub API client, downloads, and asset pattern matching
-│   ├── installer.py            # Extraction, update strategies, and lifecycle hooks
+│   ├── config.py               # Reads and writes the manifest
+│   ├── github.py               # GitHub API, downloads and asset matching
+│   ├── installer.py            # Unpacking, update strategies and hooks
 │   └── ui/
-│       ├── __init__.py
-│       ├── app.py              # Adw.Application lifecycle setup
-│       ├── main_window.py      # Primary application window and tool listing
-│       ├── settings_dialog.py  # Preferences and manifest configuration dialog
-│       └── track_dialog.py     # Repository tracking and asset selection dialog
-├── tests/                      # Unit tests (no GTK required)
-└── README.md
+│       ├── app.py              # Application setup
+│       ├── main_window.py      # Main window and the list of tools
+│       ├── settings_dialog.py  # Settings
+│       └── track_dialog.py     # Adding and editing a tool
+└── tests/                      # Unit tests
 ```
 
-## Running the Tests
+Run the tests with:
 
 ```bash
 python -m unittest discover -s tests -t .
